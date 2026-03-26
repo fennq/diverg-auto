@@ -11,7 +11,7 @@ Lightweight web security scanner — HTTP headers, SSL/TLS, CSP, cookies, conten
 ## Install
 
 ```bash
-pip install diverg-lite
+pip install diverg-lite   # PyPI name; product/repo: diverg-auto
 ```
 
 Or from source:
@@ -121,7 +121,7 @@ Scoring: each finding deducts points based on severity (Critical: 25, High: 15, 
 
 ## OpenClaw Integration
 
-diverg-auto ships with an [OpenClaw](https://github.com/openclaw/openclaw) skill file for autonomous agents.
+**diverg-auto** ships with an [OpenClaw](https://github.com/openclaw/openclaw) skill file for autonomous agents.
 
 ### Install the skill
 
