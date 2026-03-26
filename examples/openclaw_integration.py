@@ -1,7 +1,7 @@
 """
-Using diverg-lite from an OpenClaw agent skill.
+Using diverg-auto from an OpenClaw agent skill.
 
-OpenClaw skills call diverg-lite via CLI:
+OpenClaw skills call diverg-auto via CLI:
     diverg-scan "https://target.com" --json
 
 Or programmatically for richer control:
@@ -13,7 +13,7 @@ from diverg_lite import scan, batch_scan
 
 def scan_for_agent(url: str, scan_type: str = "standard") -> dict:
     """
-    Run a Diverg scan and return a dict optimized for agent consumption.
+    Run a diverg-auto scan and return a dict optimized for agent consumption.
     Includes a plain-text summary the agent can relay directly to the user.
     """
     report = scan(url, scan_type=scan_type)

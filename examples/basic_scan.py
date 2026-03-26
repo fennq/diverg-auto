@@ -1,4 +1,4 @@
-"""Basic usage — scan a URL and print results."""
+"""Basic diverg-auto usage — scan a URL and print results."""
 
 from diverg_lite import scan, quick_scan, batch_scan
 

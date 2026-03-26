@@ -1,8 +1,10 @@
-# diverg-lite
+# diverg-auto
 
 Lightweight web security scanner — HTTP headers, SSL/TLS, CSP, cookies, content analysis, tech fingerprinting, and security scoring. Built for autonomous agents.
 
-**diverg-lite** extracts the security scanning engine from [Diverg](https://github.com/fennq/diverg) into a standalone, pip-installable package. Designed for OpenClaw agents, CI pipelines, or any Python project that needs fast, structured security posture checks.
+**diverg-auto** extracts the security scanning engine from [Diverg](https://github.com/fennq/diverg) into a standalone, pip-installable package. Designed for OpenClaw agents, CI pipelines, or any Python project that needs fast, structured security posture checks.
+
+*Install from PyPI as `diverg-lite`; Python import path is `diverg_lite`.*
 
 > **Security sector only.** This package covers web security scanning. Blockchain investigation tools remain in the main Diverg repo.
 
@@ -119,7 +121,7 @@ Scoring: each finding deducts points based on severity (Critical: 25, High: 15, 
 
 ## OpenClaw Integration
 
-diverg-lite ships with an [OpenClaw](https://github.com/openclaw/openclaw) skill file for autonomous agents.
+diverg-auto ships with an [OpenClaw](https://github.com/openclaw/openclaw) skill file for autonomous agents.
 
 ### Install the skill
 
@@ -143,7 +145,7 @@ Once installed, your OpenClaw agent responds to natural language:
 - *"scan these three URLs and compare their scores"*
 - *"save a security report for https://example.com"*
 
-The skill auto-installs diverg-lite if missing, runs the scan, and presents findings with score, grade, and remediation steps.
+The skill auto-installs the PyPI package (`diverg-lite`) if missing, runs the scan, and presents findings with score, grade, and remediation steps.
 
 ### Trigger phrases
 

@@ -3,13 +3,14 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
+# PyPI distribution name remains diverg-lite; product and repo: diverg-auto
 name = "diverg-lite"
 version = "0.2.0"
-description = "Lightweight web security scanner — headers, SSL/TLS, CSP, cookies, content analysis. Built for autonomous agents."
+description = "diverg-auto — lightweight web security scanner (headers, SSL/TLS, CSP, cookies, content). Built for autonomous agents."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
-authors = [{name = "Diverg"}]
+authors = [{name = "diverg-auto"}]
 keywords = ["security", "scanner", "headers", "ssl", "csp", "openclaw", "agent"]
 classifiers = [
     "Development Status :: 4 - Beta",

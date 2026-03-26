@@ -1,5 +1,5 @@
 """
-diverg-lite — Lightweight web security scanner for autonomous agents.
+diverg-auto — Lightweight web security scanner for autonomous agents.
 
 Usage:
     from diverg_lite import scan, quick_scan, batch_scan

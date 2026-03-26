@@ -1,21 +1,21 @@
 ---
 name: diverg-security-scan
 version: 2.0.0
-description: Run a Diverg Lite web security scan — headers, SSL/TLS, CSP, cookies, content analysis. Returns score, grade, findings with remediation, redirect chain, and tech fingerprint. Supports multi-URL batch scans.
+description: Run a diverg-auto web security scan — headers, SSL/TLS, CSP, cookies, content analysis. Returns score, grade, findings with remediation, redirect chain, and tech fingerprint. Supports multi-URL batch scans.
 trigger: "security scan|scan website|check security|diverg scan|security headers|ssl check|check headers|website security|scan url|security audit|check ssl|scan domain"
 tools: [shell, filesystem]
-author: diverg
+author: diverg-auto
 config:
   scan_type: "standard"
 ---
 
-# Diverg Security Scan
+# diverg-auto — security scan
 
-Run a security assessment on one or more target URLs using Diverg Lite. Returns a score (0-100), letter grade (A-F), structured findings, redirect chain, and detected technologies.
+Run a security assessment on one or more target URLs using **diverg-auto** (PyPI package `diverg-lite`). Returns a score (0-100), letter grade (A-F), structured findings, redirect chain, and detected technologies.
 
 ## Prerequisites
 
-Check if Diverg Lite is installed, install if not:
+Check if diverg-auto is installed (`diverg_lite` import / `diverg-scan` CLI), install if not:
 
 ```bash
 python3 -c "import diverg_lite" 2>/dev/null || pip install diverg-lite

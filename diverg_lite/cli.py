@@ -12,7 +12,7 @@ from .models import SEVERITY_ORDER
 def main():
     parser = argparse.ArgumentParser(
         prog="diverg-scan",
-        description="Diverg Lite — lightweight web security scanner",
+        description="diverg-auto — lightweight web security scanner",
     )
     parser.add_argument("urls", nargs="*", help="Target URL(s) to scan")
     parser.add_argument(
