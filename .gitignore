@@ -25,3 +25,8 @@ Thumbs.db
 
 # Environment
 .env
+
+# Long-form / social drafts — keep local only; do not commit
+docs/ARTICLE_*.md
+docs/ARTICLE_*.pdf
+docs/TWEET*.md
