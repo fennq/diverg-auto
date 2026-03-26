@@ -14,9 +14,9 @@ Your agent can navigate to a phishing site, submit credentials to an HTTP endpoi
 
 We wanted to fix that.
 
-## What diverg-lite does
+## What diverg-auto does
 
-diverg-lite is the security scanning engine from Diverg, extracted into a lightweight Python package. It performs passive security checks against any URL and returns structured, actionable results.
+diverg-auto is the security scanning engine from Diverg, extracted into a standalone Python package. It performs passive security checks against any URL and returns structured, actionable results.
 
 **One command:**
 
@@ -78,7 +78,7 @@ Then your agent responds to natural language:
 - "compare the security of these three URLs"
 - "save a report before we deploy"
 
-The skill auto-installs diverg-lite if it's missing, runs the scan via CLI, parses the JSON, and presents findings grouped by severity with remediation steps.
+The skill auto-installs diverg-auto if it's missing, runs the scan via CLI, parses the JSON, and presents findings grouped by severity with remediation steps.
 
 No configuration. No API keys. No accounts.
 
@@ -112,7 +112,7 @@ diverg-scan https://your-site.com --min-severity Medium
 Python API if you want programmatic control:
 
 ```python
-from diverg_lite import scan, batch_scan
+from diverg_auto import scan, batch_scan
 
 report = scan("https://example.com")
 print(report.score, report.grade)  # 72, "B"
@@ -136,7 +136,7 @@ This is the **security sector** of Diverg — web security scanning only. The bl
 ## Ship it
 
 ```
-pip install diverg-lite
+pip install diverg-auto
 ```
 
 Source: https://github.com/fennq/diverg-auto
