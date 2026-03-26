@@ -1,8 +1,8 @@
 """
-Core security scanner — HTTP headers, SSL/TLS, CSP, cookies, content analysis.
+Core security scanner — HTTP headers, SSL/TLS, CSP, cookies, content analysis,
+redirect chain tracking, and technology fingerprinting.
 
-This is the engine behind diverg-lite. It performs passive/semi-passive checks
-against a target URL and returns structured findings.
+Single shared HTTP request for header + content checks (no duplicate fetches).
 """
 
 from __future__ import annotations
@@ -20,8 +20,6 @@ from cryptography.hazmat.backends import default_backend
 
 from .models import Finding, ScanReport
 from .stealth import get_session
-
-SESSION = get_session()
 
 
 # ---------------------------------------------------------------------------
@@ -82,28 +80,117 @@ CSP_WEAK_DIRECTIVES = {
     "*": ("Medium", "CSP uses wildcard '*' — effectively no restriction on that directive."),
 }
 
+TECH_SIGNATURES: dict[str, list[tuple[str, str]]] = {
+    "CDN / Proxy": [
+        ("server", "cloudflare"), ("server", "akamai"), ("server", "fastly"),
+        ("x-served-by", "cache"), ("x-cache", ""), ("cf-ray", ""),
+        ("x-vercel-id", ""), ("x-amz-cf-id", ""),
+    ],
+    "Framework": [
+        ("x-powered-by", "next.js"), ("x-powered-by", "express"),
+        ("x-powered-by", "asp.net"), ("x-powered-by", "php"),
+        ("x-generator", ""), ("x-drupal-cache", ""),
+        ("x-wordpress", ""), ("x-powered-cms", ""),
+    ],
+    "Security": [
+        ("x-xss-protection", ""), ("x-content-type-options", ""),
+        ("strict-transport-security", ""),
+    ],
+}
+
+
+# ---------------------------------------------------------------------------
+# Shared fetch — single request for headers + content
+# ---------------------------------------------------------------------------
+
+class _FetchResult:
+    __slots__ = ("response", "headers", "body", "final_url", "status_code",
+                 "redirect_chain", "error")
+
+    def __init__(self):
+        self.response = None
+        self.headers = {}
+        self.body = ""
+        self.final_url = ""
+        self.status_code = 0
+        self.redirect_chain: list[dict] = []
+        self.error: Optional[str] = None
+
+
+def _fetch(url: str, session=None) -> _FetchResult:
+    result = _FetchResult()
+    sess = session or get_session()
+    try:
+        resp = sess.get(url, allow_redirects=True, timeout=15)
+        result.response = resp
+        result.headers = resp.headers
+        result.body = resp.text[:500_000]
+        result.final_url = str(resp.url)
+        result.status_code = resp.status_code
+
+        chain = []
+        if resp.history:
+            for r in resp.history:
+                chain.append({
+                    "url": str(r.url),
+                    "status": r.status_code,
+                    "location": r.headers.get("Location", ""),
+                })
+            chain.append({"url": str(resp.url), "status": resp.status_code, "location": ""})
+        result.redirect_chain = chain
+    except Exception as e:
+        result.error = str(e)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Technology fingerprinting
+# ---------------------------------------------------------------------------
+
+def detect_technologies(headers: dict) -> list[str]:
+    techs = []
+    headers_lower = {k.lower(): str(v).lower() for k, v in headers.items()}
+
+    for category, sigs in TECH_SIGNATURES.items():
+        for header_name, value_hint in sigs:
+            hval = headers_lower.get(header_name)
+            if hval is not None:
+                if not value_hint or value_hint in hval:
+                    label = f"{hval}" if value_hint else f"{header_name}"
+                    if label not in techs:
+                        techs.append(label)
+
+    server = headers_lower.get("server", "")
+    if server and server not in techs:
+        techs.insert(0, server)
+
+    powered = headers_lower.get("x-powered-by", "")
+    if powered and powered not in techs:
+        techs.insert(0, powered)
+
+    return techs[:10]
+
 
 # ---------------------------------------------------------------------------
 # Header analysis
 # ---------------------------------------------------------------------------
 
-def check_headers(url: str) -> list[Finding]:
+def check_headers(fetch: _FetchResult, url: str) -> list[Finding]:
     findings: list[Finding] = []
-    try:
-        resp = SESSION.get(url, allow_redirects=True, timeout=15)
-    except Exception as e:
+
+    if fetch.error:
         return [Finding(
             title="Connection failed",
             severity="High",
             category="Transport Security",
-            evidence=str(e),
+            evidence=fetch.error,
             impact="Cannot assess security headers — site may be unreachable or blocking.",
             remediation="Verify the URL is correct and accessible.",
             url=url,
             finding_type="error",
         )]
 
-    headers = resp.headers
+    headers = fetch.headers
 
     for header_name, meta in SECURITY_HEADERS.items():
         value = headers.get(header_name)
@@ -152,7 +239,8 @@ def check_headers(url: str) -> list[Finding]:
             finding_type="vulnerability",
         ))
 
-    _check_cookies(resp, url, findings)
+    if fetch.response is not None:
+        _check_cookies(fetch.response, url, findings)
 
     return findings
 
@@ -162,7 +250,7 @@ def _check_hsts_value(value: str, url: str, findings: list[Finding]):
     max_age_match = re.search(r"max-age=(\d+)", val_lower)
     if max_age_match:
         max_age = int(max_age_match.group(1))
-        if max_age < 15768000:  # < 6 months
+        if max_age < 15768000:
             findings.append(Finding(
                 title="HSTS max-age is too short",
                 severity="Low",
@@ -254,7 +342,7 @@ def check_ssl(url: str) -> list[Finding]:
             title="Site served over plain HTTP",
             severity="High",
             category="Transport Security",
-            evidence=f"URL scheme is http:// — no TLS encryption.",
+            evidence="URL scheme is http:// — no TLS encryption.",
             impact="All traffic including credentials and session tokens is sent in cleartext.",
             remediation="Serve the site over HTTPS with a valid TLS certificate.",
             url=url,
@@ -353,14 +441,13 @@ def check_ssl(url: str) -> list[Finding]:
             finding_type="error",
         ))
 
-    # Probe for deprecated protocols
-    for proto_name, proto_const in [("TLSv1.0", ssl.PROTOCOL_TLS), ("TLSv1.1", ssl.PROTOCOL_TLS)]:
+    for proto_name in ("TLSv1.0", "TLSv1.1"):
         try:
-            ctx_old = ssl.SSLContext(proto_const)
+            ctx_old = ssl.SSLContext(ssl.PROTOCOL_TLS)
             if proto_name == "TLSv1.0":
                 ctx_old.maximum_version = ssl.TLSVersion.TLSv1
                 ctx_old.minimum_version = ssl.TLSVersion.TLSv1
-            elif proto_name == "TLSv1.1":
+            else:
                 ctx_old.maximum_version = ssl.TLSVersion.TLSv1_1
                 ctx_old.minimum_version = ssl.TLSVersion.TLSv1_1
             ctx_old.check_hostname = False
@@ -384,24 +471,21 @@ def check_ssl(url: str) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
-# Content analysis (HTML)
+# Content analysis (HTML) — uses shared fetch body
 # ---------------------------------------------------------------------------
 
-def check_content(url: str) -> list[Finding]:
+def check_content(fetch: _FetchResult, url: str) -> list[Finding]:
     findings: list[Finding] = []
-    try:
-        resp = SESSION.get(url, allow_redirects=True, timeout=15)
-        body = resp.text[:500_000]
-    except Exception:
+
+    if fetch.error or not fetch.body:
         return findings
 
-    content_type = resp.headers.get("Content-Type", "")
+    content_type = fetch.headers.get("Content-Type", "")
     if "text/html" not in content_type.lower():
         return findings
 
-    body_lower = body.lower()
+    body = fetch.body
 
-    # Mixed content (HTTP resources on HTTPS page)
     if url.startswith("https"):
         http_refs = re.findall(r'(?:src|href|action)=["\']http://[^"\']+["\']', body, re.IGNORECASE)
         if http_refs:
@@ -416,7 +500,6 @@ def check_content(url: str) -> list[Finding]:
                 finding_type="vulnerability",
             ))
 
-    # Forms without CSRF tokens
     forms = re.findall(r"<form[^>]*>.*?</form>", body, re.DOTALL | re.IGNORECASE)
     csrf_names = {"csrf", "csrftoken", "_token", "authenticity_token", "csrfmiddlewaretoken", "__requestverificationtoken"}
     for form in forms[:10]:
@@ -436,7 +519,6 @@ def check_content(url: str) -> list[Finding]:
                     finding_type="vulnerability",
                 ))
 
-    # Password fields without autocomplete=off
     pwd_fields = re.findall(r'<input[^>]*type=["\']password["\'][^>]*>', body, re.IGNORECASE)
     for pf in pwd_fields[:5]:
         if 'autocomplete' not in pf.lower() or 'autocomplete="on"' in pf.lower():
@@ -451,7 +533,6 @@ def check_content(url: str) -> list[Finding]:
                 finding_type="hardening",
             ))
 
-    # Inline scripts (relevant when CSP is weak or missing)
     inline_scripts = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>", body, re.IGNORECASE)
     if len(inline_scripts) > 5:
         findings.append(Finding(
@@ -465,7 +546,6 @@ def check_content(url: str) -> list[Finding]:
             finding_type="info_disclosure",
         ))
 
-    # Third-party scripts without SRI
     ext_scripts = re.findall(r'<script[^>]*src=["\']([^"\']+)["\'][^>]*>', body, re.IGNORECASE)
     parsed_url = urlparse(url)
     for src in ext_scripts:
@@ -489,6 +569,33 @@ def check_content(url: str) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# Security score
+# ---------------------------------------------------------------------------
+
+SEVERITY_WEIGHTS = {"Critical": 25, "High": 15, "Medium": 8, "Low": 3, "Info": 0}
+
+def compute_score(findings: list[Finding]) -> tuple[int, str]:
+    """Return (score 0-100, grade A-F). 100 = no issues."""
+    penalty = 0
+    for f in findings:
+        if f.finding_type == "error":
+            continue
+        penalty += SEVERITY_WEIGHTS.get(f.severity, 0)
+    score = max(0, min(100, 100 - penalty))
+    if score >= 90:
+        grade = "A"
+    elif score >= 75:
+        grade = "B"
+    elif score >= 55:
+        grade = "C"
+    elif score >= 35:
+        grade = "D"
+    else:
+        grade = "F"
+    return score, grade
+
+
+# ---------------------------------------------------------------------------
 # Top-level scan functions
 # ---------------------------------------------------------------------------
 
@@ -497,20 +604,25 @@ def scan(url: str, scan_type: str = "standard") -> ScanReport:
     Run a security scan on the target URL.
 
     scan_type:
-        - "quick"    — headers only
+        - "quick"    — headers only (fastest)
         - "standard" — headers + SSL + content (default)
         - "headers"  — alias for quick
         - "full"     — same as standard (future: adds path probing)
+
+    Returns a ScanReport with findings, score, grade, redirect chain, and detected technologies.
     """
     if not url.startswith("http"):
         url = f"https://{url}"
 
     start = time.time()
+    session = get_session()
     all_findings: list[Finding] = []
     errors: list[str] = []
 
+    fetch = _fetch(url, session)
+
     try:
-        all_findings.extend(check_headers(url))
+        all_findings.extend(check_headers(fetch, url))
     except Exception as e:
         errors.append(f"Header check error: {e}")
 
@@ -520,12 +632,15 @@ def scan(url: str, scan_type: str = "standard") -> ScanReport:
         except Exception as e:
             errors.append(f"SSL check error: {e}")
         try:
-            all_findings.extend(check_content(url))
+            all_findings.extend(check_content(fetch, url))
         except Exception as e:
             errors.append(f"Content check error: {e}")
 
     severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
     all_findings.sort(key=lambda f: severity_rank.get(f.severity, 99))
+
+    score, grade = compute_score(all_findings)
+    techs = detect_technologies(fetch.headers) if not fetch.error else []
 
     elapsed = int((time.time() - start) * 1000)
     return ScanReport(
@@ -534,9 +649,20 @@ def scan(url: str, scan_type: str = "standard") -> ScanReport:
         errors=errors,
         scan_type=scan_type,
         duration_ms=elapsed,
+        score=score,
+        grade=grade,
+        redirect_chain=fetch.redirect_chain,
+        technologies=techs,
+        final_url=fetch.final_url if fetch.final_url != url else "",
+        status_code=fetch.status_code,
     )
 
 
 def quick_scan(url: str) -> ScanReport:
     """Headers-only scan — fast, no SSL probe or content analysis."""
     return scan(url, scan_type="quick")
+
+
+def batch_scan(urls: list[str], scan_type: str = "standard") -> list[ScanReport]:
+    """Scan multiple URLs sequentially. Returns a list of ScanReport objects."""
+    return [scan(u, scan_type=scan_type) for u in urls]
