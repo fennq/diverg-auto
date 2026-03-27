@@ -599,7 +599,13 @@ def compute_score(findings: list[Finding]) -> tuple[int, str]:
 # Top-level scan functions
 # ---------------------------------------------------------------------------
 
-def scan(url: str, scan_type: str = "standard") -> ScanReport:
+def scan(
+    url: str,
+    scan_type: str = "standard",
+    *,
+    probe_names: list[str] | None = None,
+    max_requests_per_probe: int | None = None,
+) -> ScanReport:
     """
     Run a security scan on the target URL.
 
@@ -607,9 +613,15 @@ def scan(url: str, scan_type: str = "standard") -> ScanReport:
         - "quick"    — headers only (fastest)
         - "standard" — headers + SSL + content (default)
         - "headers"  — alias for quick
-        - "full"     — same as standard (future: adds path probing)
+        - "full"     — standard + active vulnerability probes
+        - "active"   — alias for full
 
-    Returns a ScanReport with findings, score, grade, redirect chain, and detected technologies.
+    probe_names:
+        Run only these probes during active scanning (default: all).
+        Valid names: xss, sqli, traversal, redirect, ssrf, auth
+
+    Returns a ScanReport with findings, score, grade, redirect chain,
+    detected technologies, and (for active scans) attack paths.
     """
     if not url.startswith("http"):
         url = f"https://{url}"
@@ -618,6 +630,7 @@ def scan(url: str, scan_type: str = "standard") -> ScanReport:
     session = get_session()
     all_findings: list[Finding] = []
     errors: list[str] = []
+    attack_paths_data: list[dict] = []
 
     fetch = _fetch(url, session)
 
@@ -635,6 +648,29 @@ def scan(url: str, scan_type: str = "standard") -> ScanReport:
             all_findings.extend(check_content(fetch, url))
         except Exception as e:
             errors.append(f"Content check error: {e}")
+
+    # Active vulnerability probing
+    if scan_type in ("full", "active"):
+        try:
+            from .probes import run_probes
+            active_findings = run_probes(
+                url, session,
+                body=fetch.body,
+                headers=dict(fetch.headers) if fetch.headers else None,
+                probe_names=probe_names,
+                max_requests_per_probe=max_requests_per_probe,
+            )
+            all_findings.extend(active_findings)
+        except Exception as e:
+            errors.append(f"Active probe error: {e}")
+
+        # Attack-path reasoning
+        try:
+            from .attack_path import analyze_attack_paths
+            paths = analyze_attack_paths(all_findings)
+            attack_paths_data = [p.to_dict() for p in paths]
+        except Exception as e:
+            errors.append(f"Attack path analysis error: {e}")
 
     severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
     all_findings.sort(key=lambda f: severity_rank.get(f.severity, 99))
@@ -655,6 +691,7 @@ def scan(url: str, scan_type: str = "standard") -> ScanReport:
         technologies=techs,
         final_url=fetch.final_url if fetch.final_url != url else "",
         status_code=fetch.status_code,
+        attack_paths=attack_paths_data,
     )
 
 
@@ -663,6 +700,25 @@ def quick_scan(url: str) -> ScanReport:
     return scan(url, scan_type="quick")
 
 
-def batch_scan(urls: list[str], scan_type: str = "standard") -> list[ScanReport]:
+def active_scan(
+    url: str,
+    *,
+    probe_names: list[str] | None = None,
+    max_requests_per_probe: int | None = None,
+) -> ScanReport:
+    """Full passive + active vulnerability probing with attack-path analysis."""
+    return scan(
+        url, scan_type="full",
+        probe_names=probe_names,
+        max_requests_per_probe=max_requests_per_probe,
+    )
+
+
+def batch_scan(
+    urls: list[str],
+    scan_type: str = "standard",
+    *,
+    probe_names: list[str] | None = None,
+) -> list[ScanReport]:
     """Scan multiple URLs sequentially. Returns a list of ScanReport objects."""
-    return [scan(u, scan_type=scan_type) for u in urls]
+    return [scan(u, scan_type=scan_type, probe_names=probe_names) for u in urls]

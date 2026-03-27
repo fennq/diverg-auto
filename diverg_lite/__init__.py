@@ -1,26 +1,28 @@
 """
-diverg-auto — Lightweight web security scanner for autonomous agents.
+diverg-auto — autonomous web security scanner for agents and CI.
 
-Usage:
+Passive analysis (headers, SSL, CSP, cookies, content, tech fingerprint):
     from diverg_lite import scan, quick_scan, batch_scan
 
-    report = scan("https://example.com")
-    print(report.score, report.grade)  # 72, "B"
-    print(report.to_json())
+Active vulnerability probing (XSS, SQLi, traversal, SSRF, auth bypass):
+    from diverg_lite import active_scan
 
-    # Headers-only (fast):
-    report = quick_scan("https://example.com")
-    print(report.summary)
+    report = active_scan("https://example.com")
+    print(report.score, report.grade)
+    print(report.attack_paths)   # exploit chains
 
-    # Multiple URLs:
-    reports = batch_scan(["https://a.com", "https://b.com"])
-
-    # Markdown report:
-    print(report.to_markdown())
+Quick reference — scan types:
+    quick    — headers only
+    standard — headers + SSL + content (default)
+    full     — standard + active probes + attack-path reasoning
+    active   — alias for full
 """
 
-from .scanner import scan, quick_scan, batch_scan
+from .scanner import scan, quick_scan, active_scan, batch_scan
 from .models import Finding, ScanReport
 
-__version__ = "0.2.0"
-__all__ = ["scan", "quick_scan", "batch_scan", "Finding", "ScanReport"]
+__version__ = "0.3.0"
+__all__ = [
+    "scan", "quick_scan", "active_scan", "batch_scan",
+    "Finding", "ScanReport",
+]

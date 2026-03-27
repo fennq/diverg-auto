@@ -1,12 +1,10 @@
 # diverg-auto
 
-Lightweight web security scanner — HTTP headers, SSL/TLS, CSP, cookies, content analysis, tech fingerprinting, and security scoring. Built for autonomous agents.
+Autonomous web security scanner — passive analysis, active vulnerability probing, and attack-path reasoning. Built for agents and CI.
 
-**diverg-auto** extracts the security scanning engine from [Diverg](https://github.com/fennq/diverg) into a standalone, pip-installable package. Designed for OpenClaw agents, CI pipelines, or any Python project that needs fast, structured security posture checks.
+**diverg-auto** goes beyond header checking. It passively analyses headers, SSL/TLS, CSP, cookies, and content, then *actively probes* for real vulnerabilities — reflected XSS, SQL injection, path traversal, open redirects, SSRF, and auth bypass — and chains findings into **exploit narratives** so an agent (or human) knows exactly what an attacker would do.
 
 *Install from PyPI as `diverg-lite`; Python import path is `diverg_lite`.*
-
-> **Security sector only.** This package covers web security scanning. Blockchain investigation tools remain in the main Diverg repo.
 
 ## Install
 
@@ -27,18 +25,21 @@ pip install -e .
 ### Python
 
 ```python
-from diverg_lite import scan, quick_scan, batch_scan
+from diverg_lite import scan, quick_scan, active_scan, batch_scan
 
+# Standard passive scan (headers + SSL + content)
 report = scan("https://example.com")
 print(report.score, report.grade)   # 72, "B"
-print(report.technologies)          # ["cloudflare", "next.js"]
-print(report.redirect_chain)        # [{url, status, location}, ...]
+
+# Full active probing — XSS, SQLi, traversal, SSRF, auth bypass
+report = active_scan("https://example.com")
+print(report.attack_paths)          # exploit chains
 
 for f in report.findings:
     print(f"[{f.severity}] {f.title}")
 
-# Filter to Medium+ only
-actionable = report.filter_by_severity("Medium")
+# Run specific probes only
+report = active_scan("https://example.com", probe_names=["xss", "sqli"])
 
 # Headers-only (fast, ~1-2s)
 quick = quick_scan("https://example.com")
@@ -49,21 +50,27 @@ for r in reports:
     print(f"{r.target_url}: {r.score}/100 ({r.grade})")
 
 # Export
-print(report.to_json())       # structured JSON
-print(report.to_markdown())   # human-readable report
+print(report.to_json())
+print(report.to_markdown())
 ```
 
 ### CLI
 
 ```bash
-# Human-readable output with score
+# Standard scan (passive)
 diverg-scan https://example.com
 
+# Full active probing
+diverg-scan https://example.com --type full
+
+# Active with specific probes only
+diverg-scan https://example.com --type active --probe xss,sqli
+
 # JSON output
-diverg-scan https://example.com --json
+diverg-scan https://example.com --type full --json
 
 # Multiple URLs
-diverg-scan https://a.com https://b.com --json
+diverg-scan https://a.com https://b.com --type full --json
 
 # From a file (one URL per line)
 diverg-scan --file urls.txt --json
@@ -71,12 +78,8 @@ diverg-scan --file urls.txt --json
 # Headers-only (fast)
 diverg-scan https://example.com --type quick
 
-# Markdown report
-diverg-scan https://example.com --markdown
-
-# Save to file
-diverg-scan https://example.com --json --output report.json
-diverg-scan https://example.com --markdown -o report.md
+# Markdown report with attack paths
+diverg-scan https://example.com --type full --markdown -o report.md
 
 # Only show Medium+ findings
 diverg-scan https://example.com --min-severity Medium
@@ -85,7 +88,15 @@ diverg-scan https://example.com --min-severity Medium
 diverg-scan https://staging.example.com --fail-on High
 ```
 
-## What It Checks
+## Scan Types
+
+| Type | What it does | Speed |
+|------|-------------|-------|
+| `quick` / `headers` | HTTP headers only | ~1-2s |
+| `standard` (default) | Headers + SSL/TLS + content analysis | ~3-5s |
+| `full` / `active` | Standard + active vulnerability probes + attack-path reasoning | ~10-30s |
+
+## Passive Checks
 
 | Category | Checks |
 |----------|--------|
@@ -94,18 +105,55 @@ diverg-scan https://staging.example.com --fail-on High
 | **Cookie Security** | Secure, HttpOnly, SameSite flags on response cookies |
 | **Information Disclosure** | Server, X-Powered-By, ASP.NET version headers |
 | **CORS** | Overly permissive Access-Control-Allow-Origin |
-| **Tech Fingerprint** | CDN (Cloudflare, Akamai, Fastly, Vercel), frameworks (Next.js, Express, ASP.NET, PHP), security headers present |
+| **Tech Fingerprint** | CDN (Cloudflare, Akamai, Fastly, Vercel), frameworks (Next.js, Express, ASP.NET, PHP) |
 | **Redirects** | Full redirect chain with status codes |
 
-### Scan Types
+## Active Probes
 
-| Type | What it does | Speed |
-|------|-------------|-------|
-| `quick` / `headers` | HTTP headers only | ~1-2s |
-| `standard` (default) | Headers + SSL/TLS + content analysis | ~3-5s |
-| `full` | Same as standard (reserved for future path probing) | ~3-5s |
+Active probes send non-destructive test payloads to discover real vulnerabilities. Only run against targets you have authorization to test.
 
-### Security Score
+| Probe | What it finds | CWE |
+|-------|--------------|-----|
+| **xss** | Reflected XSS — canary injection, context-aware (HTML body, attribute, script, comment) | CWE-79 |
+| **sqli** | SQL injection — error-based (MySQL, PostgreSQL, MSSQL, SQLite, Oracle) + boolean-blind | CWE-89 |
+| **traversal** | Path traversal / LFI — directory traversal sequences, encoding bypasses, OS file markers | CWE-22 |
+| **redirect** | Open redirect — redirect parameter detection, protocol-relative/backslash/encoding bypasses | CWE-601 |
+| **ssrf** | SSRF — cloud metadata (AWS/GCP/Azure), internal IPs, loopback, hex/octal/decimal representations | CWE-918 |
+| **auth** | Auth bypass — forced browsing (admin panels, .git, actuator, debug), HTTP verb tampering, IDOR hints | CWE-284 |
+
+### How probes work
+
+1. **Discovery** — extract injection points from URL parameters, HTML forms, and fuzz-seed parameters.
+2. **Injection** — send safe, non-destructive payloads into each parameter.
+3. **Analysis** — check responses for vulnerability indicators (error messages, reflected content, traversal markers, redirect targets).
+4. **Confirmation** — re-test with variations to reduce false positives.
+5. **Attack paths** — chain findings into exploit narratives with severity, likelihood, and prioritized remediation.
+
+### Safety controls
+
+- Hard per-probe request cap (default 20-40 per probe type).
+- Stealth session with timing jitter, rate limiting, WAF backoff.
+- No destructive payloads — all tests are read-only.
+- Authorization warning in CLI and docs.
+
+## Attack-Path Reasoning
+
+Active scans chain individual findings into **exploit narratives**:
+
+| Chain | Example |
+|-------|---------|
+| **Session Hijack via XSS** | Reflected XSS + missing HttpOnly cookie → steal session tokens |
+| **XSS Amplified by Weak CSP** | XSS + unsafe-inline CSP → no browser defence |
+| **Database Compromise** | SQL injection → full database read/write |
+| **Phishing via Open Redirect** | Open redirect on trusted domain → credential harvesting |
+| **Internal Pivot via SSRF** | SSRF → cloud metadata / internal APIs |
+| **Source Exposure** | Path traversal → config files, secrets, source code |
+| **Admin Takeover** | Exposed admin panel + no auth → full application control |
+| **Git Exposure** | Accessible .git directory → full source + history |
+
+Each path includes severity, likelihood score, and a prioritized fix order.
+
+## Security Score
 
 Every scan produces a **0-100 score** and **letter grade** (A-F):
 
@@ -140,41 +188,16 @@ openclaw clawhub install https://github.com/fennq/diverg-auto/skills/diverg-secu
 Once installed, your OpenClaw agent responds to natural language:
 
 - *"scan https://example.com for security issues"*
-- *"check the security headers on our staging site"*
-- *"what's the security score for https://myapp.com?"*
+- *"deep scan this URL for vulnerabilities"*
+- *"run active probes against staging"*
 - *"scan these three URLs and compare their scores"*
-- *"save a security report for https://example.com"*
+- *"save a security report with attack paths"*
 
-The skill auto-installs the PyPI package (`diverg-lite`) if missing, runs the scan, and presents findings with score, grade, and remediation steps.
+The skill auto-installs the PyPI package (`diverg-lite`) if missing, runs the scan, and presents findings with score, grade, attack paths, and remediation steps.
 
 ### Trigger phrases
 
 `security scan`, `scan website`, `check security`, `diverg scan`, `security headers`, `ssl check`, `check headers`, `website security`, `scan url`, `security audit`, `check ssl`, `scan domain`
-
-## Output Formats
-
-### JSON
-
-```json
-{
-    "target_url": "https://example.com",
-    "score": 72,
-    "grade": "B",
-    "scan_type": "standard",
-    "duration_ms": 3200,
-    "technologies": ["cloudflare"],
-    "redirect_chain": [
-        {"url": "http://example.com", "status": 301, "location": "https://example.com/"},
-        {"url": "https://example.com/", "status": 200, "location": ""}
-    ],
-    "summary": {"total": 8, "by_severity": {...}, "score": 72, "grade": "B"},
-    "findings": [...]
-}
-```
-
-### Markdown
-
-`diverg-scan https://example.com --markdown` produces a formatted report with severity-grouped findings, redirect chain, tech stack, and remediation steps.
 
 ## Stealth
 
@@ -190,13 +213,24 @@ diverg-scan https://example.com
 ```
 diverg-auto/
 ├── diverg_lite/
-│   ├── __init__.py        # Public API: scan(), quick_scan(), batch_scan()
-│   ├── scanner.py         # Core engine (shared fetch, headers, SSL, content, score, tech detect)
+│   ├── __init__.py        # Public API: scan(), quick_scan(), active_scan(), batch_scan()
+│   ├── scanner.py         # Core engine (passive + active orchestration)
 │   ├── stealth.py         # Stealth networking
-│   ├── models.py          # Finding, ScanReport (JSON, Markdown, filtering)
-│   └── cli.py             # CLI (multi-URL, --json, --markdown, --output, --min-severity, --fail-on)
+│   ├── models.py          # Finding, ScanReport (JSON, Markdown, filtering, attack paths)
+│   ├── cli.py             # CLI (--type full, --probe, --json, --markdown, --fail-on)
+│   ├── attack_path.py     # Attack-path reasoning engine
+│   └── probes/
+│       ├── __init__.py    # Probe registry + run_probes()
+│       ├── base.py        # BaseProbe, InjectionPoint, safety controls
+│       ├── discovery.py   # Injection-point discovery (params, forms, fuzz)
+│       ├── xss.py         # Reflected XSS probe
+│       ├── sqli.py        # SQL injection probe
+│       ├── traversal.py   # Path traversal / LFI probe
+│       ├── redirect.py    # Open redirect probe
+│       ├── ssrf.py        # SSRF probe
+│       └── auth.py        # Auth bypass / forced browsing probe
 ├── skills/
-│   └── diverg-security-scan.md   # OpenClaw skill file
+│   └── diverg-security-scan.md
 ├── examples/
 │   ├── basic_scan.py
 │   └── openclaw_integration.py

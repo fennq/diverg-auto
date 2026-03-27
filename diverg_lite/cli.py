@@ -1,4 +1,4 @@
-"""CLI entry point: diverg-scan <url> [urls...] [--type] [--json] [--markdown] [--output] [--min-severity]"""
+"""CLI entry point: diverg-scan <url> [urls...] [--type] [--json] [--markdown] [--output] [--min-severity] [--probe]"""
 
 from __future__ import annotations
 
@@ -9,10 +9,20 @@ from .scanner import scan, batch_scan
 from .models import SEVERITY_ORDER
 
 
+_BANNER_ACTIVE = """
+  ⚠  ACTIVE PROBING MODE
+  This sends test payloads (XSS canaries, SQLi strings, traversal
+  sequences, etc.) to the target. All payloads are non-destructive
+  and read-only, but they ARE visible in server logs.
+
+  Only scan targets you have authorization to test.
+"""
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="diverg-scan",
-        description="diverg-auto — lightweight web security scanner",
+        description="diverg-auto — autonomous web security scanner",
     )
     parser.add_argument("urls", nargs="*", help="Target URL(s) to scan")
     parser.add_argument(
@@ -24,8 +34,8 @@ def main():
         "--type", "-t",
         dest="scan_type",
         default="standard",
-        choices=["quick", "standard", "full", "headers"],
-        help="Scan depth (default: standard)",
+        choices=["quick", "standard", "full", "active", "headers"],
+        help="Scan depth: quick (headers), standard (+ SSL + content), full/active (+ vulnerability probes)",
     )
     parser.add_argument("--json", action="store_true", help="Output JSON")
     parser.add_argument("--markdown", "--md", action="store_true", help="Output Markdown report")
@@ -48,6 +58,20 @@ def main():
         choices=["Critical", "High", "Medium", "Low"],
         help="Exit with code 1 if any finding at or above this severity (for CI)",
     )
+    parser.add_argument(
+        "--probe",
+        dest="probes",
+        default=None,
+        help="Comma-separated probe names to run (default: all). "
+             "Options: xss,sqli,traversal,redirect,ssrf,auth",
+    )
+    parser.add_argument(
+        "--max-probe-requests",
+        dest="max_probe_requests",
+        type=int,
+        default=None,
+        help="Max HTTP requests per probe (default: probe-specific)",
+    )
     args = parser.parse_args()
 
     urls = list(args.urls or [])
@@ -66,7 +90,23 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    reports = batch_scan(urls, scan_type=args.scan_type)
+    # Warn when using active probing
+    if args.scan_type in ("full", "active") and not args.json:
+        print(_BANNER_ACTIVE, file=sys.stderr)
+
+    probe_names = None
+    if args.probes:
+        probe_names = [p.strip() for p in args.probes.split(",") if p.strip()]
+
+    scan_kwargs = {}
+    if probe_names:
+        scan_kwargs["probe_names"] = probe_names
+    if args.max_probe_requests is not None:
+        scan_kwargs["max_requests_per_probe"] = args.max_probe_requests
+
+    reports = [
+        scan(u, scan_type=args.scan_type, **scan_kwargs) for u in urls
+    ]
 
     output_parts = []
 
@@ -111,7 +151,7 @@ def _format_human(report) -> str:
     s = report.summary
     lines = []
     lines.append(f"\n{'='*60}")
-    lines.append(f"  DIVERG LITE — {report.target_url}")
+    lines.append(f"  DIVERG AUTO — {report.target_url}")
     lines.append(f"  Score: {report.score}/100 (Grade: {report.grade})")
     lines.append(f"{'='*60}")
     lines.append(f"  Scan type: {report.scan_type}  |  Duration: {report.duration_ms}ms")
@@ -137,13 +177,52 @@ def _format_human(report) -> str:
         for i, f in enumerate(actionable[:20], 1):
             lines.append(f"  {i:2}. [{f.severity:>8}] {f.title}")
             if f.evidence:
-                lines.append(f"               {f.evidence[:80]}")
+                ev = f.evidence.split("\n")[0][:80]
+                lines.append(f"               {ev}")
+
+    if report.attack_paths:
+        lines.append("")
+        lines.append(f"  {'='*56}")
+        lines.append(f"  ATTACK PATHS ({len(report.attack_paths)} identified)")
+        lines.append(f"  {'='*56}")
+        for ap in report.attack_paths:
+            likelihood = ap.get("likelihood", 0)
+            lines.append(f"")
+            lines.append(f"  [{ap.get('severity', '?'):>8}] {ap.get('name', '?')}  "
+                         f"(likelihood: {likelihood:.0%})")
+            if ap.get("narrative"):
+                for nline in _wrap(ap["narrative"], 52):
+                    lines.append(f"           {nline}")
+            if ap.get("remediation_priority"):
+                lines.append(f"           Fix order:")
+                for i, fix in enumerate(ap["remediation_priority"][:3], 1):
+                    lines.append(f"             {i}. {fix}")
+
     lines.append(f"\n{'='*60}\n")
 
     if report.errors:
         for e in report.errors:
             lines.append(f"  [error] {e}")
     return "\n".join(lines)
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    """Simple word-wrap for terminal output."""
+    words = text.split()
+    lines: list[str] = []
+    current: list[str] = []
+    length = 0
+    for w in words:
+        if length + len(w) + 1 > width and current:
+            lines.append(" ".join(current))
+            current = [w]
+            length = len(w)
+        else:
+            current.append(w)
+            length += len(w) + 1
+    if current:
+        lines.append(" ".join(current))
+    return lines
 
 
 if __name__ == "__main__":
