@@ -623,7 +623,7 @@ def scan(
     Returns a ScanReport with findings, score, grade, redirect chain,
     detected technologies, and (for active scans) attack paths.
     """
-    if not url.startswith("http"):
+    if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
 
     start = time.time()
