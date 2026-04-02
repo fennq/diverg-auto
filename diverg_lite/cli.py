@@ -108,6 +108,9 @@ def main():
         scan(u, scan_type=args.scan_type, **scan_kwargs) for u in urls
     ]
 
+    # --fail-on must use full findings; --min-severity only affects displayed output
+    findings_for_fail = [list(r.findings) for r in reports]
+
     output_parts = []
 
     for report in reports:
@@ -141,8 +144,8 @@ def main():
 
     if args.fail_severity:
         threshold = SEVERITY_ORDER.get(args.fail_severity, 4)
-        for r in reports:
-            for f in r.findings:
+        for original in findings_for_fail:
+            for f in original:
                 if SEVERITY_ORDER.get(f.severity, 4) <= threshold:
                     sys.exit(1)
 

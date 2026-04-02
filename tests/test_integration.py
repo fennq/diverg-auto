@@ -6,6 +6,7 @@ import sys
 import os
 import json
 import subprocess
+import tempfile
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -119,6 +120,19 @@ reports = assert_no_crash("batch_scan empty list", lambda: batch_scan([]))
 if reports is not None:
     assert_eq("batch empty returns empty", len(reports), 0)
 
+# batch_scan forwards max_requests_per_probe like scan()
+reports = assert_no_crash(
+    "batch_scan max_requests_per_probe",
+    lambda: batch_scan(
+        ["https://httpbin.org"],
+        scan_type="full",
+        probe_names=["auth"],
+        max_requests_per_probe=2,
+    ),
+)
+if reports:
+    assert_eq("batch max_requests returns 1 report", len(reports), 1)
+
 
 # ---- CLI: all flag combos --------------------------------------------------
 print("\n=== CLI: flag combinations ===")
@@ -160,16 +174,20 @@ r = run_cli(["https://httpbin.org", "--type", "quick", "--json", "--fail-on", "H
 # Exit code is 1 if High findings exist — that's correct behavior
 assert_true("CLI --fail-on High exit code is 0 or 1", r.returncode in (0, 1))
 
-# --output to file
-outfile = "/tmp/diverg_test_output.json"
-r = run_cli(["https://httpbin.org", "--type", "quick", "--json", "--output", outfile])
-assert_eq("CLI --output exit 0", r.returncode, 0)
-assert_true("CLI --output file exists", os.path.exists(outfile))
-if os.path.exists(outfile):
-    with open(outfile) as f:
-        content = f.read()
-    assert_no_crash("CLI --output is valid JSON", lambda: json.loads(content))
-    os.remove(outfile)
+# --output to file (temp dir works on Windows and Unix)
+fd, outfile = tempfile.mkstemp(suffix=".json", prefix="diverg_test_output_")
+os.close(fd)
+try:
+    r = run_cli(["https://httpbin.org", "--type", "quick", "--json", "--output", outfile])
+    assert_eq("CLI --output exit 0", r.returncode, 0)
+    assert_true("CLI --output file exists", os.path.exists(outfile))
+    if os.path.exists(outfile):
+        with open(outfile, encoding="utf-8") as f:
+            content = f.read()
+        assert_no_crash("CLI --output is valid JSON", lambda: json.loads(content))
+finally:
+    if os.path.exists(outfile):
+        os.remove(outfile)
 
 # --probe flag with active type
 r = run_cli(["https://httpbin.org", "--type", "active", "--probe", "auth",
@@ -181,7 +199,8 @@ r = run_cli(["https://httpbin.org", "--type", "BOGUS"])
 assert_true("CLI bad --type exits nonzero", r.returncode != 0)
 
 # --file with nonexistent file
-r = run_cli(["--file", "/tmp/nonexistent_file_dvg.txt"])
+missing = os.path.join(tempfile.gettempdir(), "nonexistent_file_dvg_please_missing.txt")
+r = run_cli(["--file", missing])
 assert_eq("CLI bad --file exit 1", r.returncode, 1)
 
 
