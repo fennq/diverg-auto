@@ -1,6 +1,6 @@
-"""Basic diverg-auto usage — scan a URL and print results."""
+"""Basic diverg-auto usage with passive and active scan paths."""
 
-from diverg_lite import scan, quick_scan, batch_scan
+from diverg_lite import scan, quick_scan, active_scan, batch_scan
 
 # Standard scan: headers + SSL + content analysis
 report = scan("https://example.com")
@@ -24,6 +24,10 @@ for finding in report.findings:
 # Quick scan: headers only
 quick = quick_scan("https://example.com")
 print(f"\nQuick scan: {quick.summary['total']} findings, score {quick.score} in {quick.duration_ms}ms")
+
+# Full active scan: probes + attack-path reasoning
+active = active_scan("https://example.com", probe_names=["xss", "sqli"])
+print(f"Active scan: {active.summary['total']} findings, attack paths {len(active.attack_paths)}")
 
 # Filter to Medium+ only
 medium_up = report.filter_by_severity("Medium")

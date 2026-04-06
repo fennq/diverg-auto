@@ -1,7 +1,7 @@
 ---
 name: diverg-security-scan
-version: 2.0.0
-description: Run a diverg-auto web security scan — headers, SSL/TLS, CSP, cookies, content analysis. Returns score, grade, findings with remediation, redirect chain, and tech fingerprint. Supports multi-URL batch scans.
+version: 2.1.0
+description: Run a diverg-auto web security scan with passive checks and optional active probing. Returns score, grade, findings with remediation, attack paths, redirect chain, and tech fingerprint. Supports multi-URL scans.
 trigger: "security scan|scan website|check security|diverg scan|security headers|ssl check|check headers|website security|scan url|security audit|check ssl|scan domain"
 tools: [shell, filesystem]
 author: diverg-auto
@@ -11,7 +11,7 @@ config:
 
 # diverg-auto — security scan
 
-Run a security assessment on one or more target URLs using **diverg-auto** (PyPI package `diverg-lite`). Returns a score (0-100), letter grade (A-F), structured findings, redirect chain, and detected technologies.
+Run a security assessment on one or more target URLs using **diverg-auto** (PyPI package `diverg-lite`). Returns a score (0-100), letter grade (A-F), structured findings, attack paths (when active mode is used), redirect chain, and detected technologies.
 
 ## Prerequisites
 
@@ -38,13 +38,20 @@ python3 -c "import diverg_lite" 2>/dev/null || pip install diverg-lite
 2. Determine scan type and options:
    - `quick` — headers only (~1-2 seconds)
    - `standard` — headers + SSL/TLS + content analysis (default, ~3-5 seconds)
+   - `full` / `active` — standard checks + active probes (XSS, SQLi, traversal, redirect, SSRF, auth) and attack-path reasoning
    - If user only cares about Critical/High issues, add `--min-severity High`
 
 3. Run the scan:
 
 ```bash
-# Single URL
+# Single URL (standard passive)
 diverg-scan "TARGET_URL" --type standard --json
+
+# Single URL (full active scan)
+diverg-scan "TARGET_URL" --type full --json
+
+# Active scan with only specific probes
+diverg-scan "TARGET_URL" --type full --probe xss,sqli --json
 
 # Multiple URLs
 diverg-scan "URL1" "URL2" "URL3" --json
@@ -66,6 +73,7 @@ diverg-scan "TARGET_URL" --markdown --output report.md
    - `score` — 0-100 security score (100 = no issues)
    - `grade` — A through F
    - `summary.by_severity` — counts per severity level
+   - `attack_paths` — exploit narratives with likelihood and fix order (active scans)
    - `technologies` — detected stack (CDN, framework, etc.)
    - `redirect_chain` — full redirect path if any
    - `findings[]` — each has `title`, `severity`, `category`, `evidence`, `impact`, `remediation`
@@ -103,7 +111,8 @@ diverg-scan "https://staging.example.com" --fail-on High
 
 ## Notes
 
-- **Passive only** — does not attempt exploitation or modify anything
+- **Standard mode is passive** — does not attempt exploitation or modify anything
+- **Full/active mode sends non-destructive test payloads** — visible in target logs
 - **Stealth** — realistic browser fingerprints, timing jitter, adaptive rate limiting
 - **No API keys** — works out of the box, no accounts needed
 - Only scan URLs you have authorization to test

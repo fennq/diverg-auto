@@ -21,7 +21,7 @@ Quick reference — scan types:
 from .scanner import scan, quick_scan, active_scan, batch_scan
 from .models import Finding, ScanReport
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 __all__ = [
     "scan", "quick_scan", "active_scan", "batch_scan",
     "Finding", "ScanReport",

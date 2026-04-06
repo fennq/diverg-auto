@@ -1,22 +1,24 @@
 """
 Using diverg-auto from an OpenClaw agent skill.
 
-OpenClaw skills call diverg-auto via CLI:
-    diverg-scan "https://target.com" --json
+OpenClaw skills can call diverg-auto via CLI:
+    diverg-scan "https://target.com" --type full --json
 
 Or programmatically for richer control:
 """
 
-import json
-from diverg_lite import scan, batch_scan
+from diverg_lite import scan, active_scan, batch_scan
 
 
-def scan_for_agent(url: str, scan_type: str = "standard") -> dict:
+def scan_for_agent(url: str, scan_type: str = "standard", probe_names: list[str] | None = None) -> dict:
     """
     Run a diverg-auto scan and return a dict optimized for agent consumption.
     Includes a plain-text summary the agent can relay directly to the user.
     """
-    report = scan(url, scan_type=scan_type)
+    if scan_type in ("full", "active"):
+        report = active_scan(url, probe_names=probe_names)
+    else:
+        report = scan(url, scan_type=scan_type)
     result = report.to_dict()
     result["agent_summary"] = _build_agent_summary(report)
     return result
@@ -43,6 +45,8 @@ def _build_agent_summary(report) -> str:
         lines.append(f"Stack: {', '.join(report.technologies[:5])}")
     if report.final_url:
         lines.append(f"Redirected to: {report.final_url}")
+    if report.attack_paths:
+        lines.append(f"Attack paths: {len(report.attack_paths)}")
 
     critical_high = [f for f in report.findings if f.severity in ("Critical", "High")]
     if critical_high:
@@ -68,5 +72,5 @@ def _build_batch_summary(reports) -> str:
 
 
 if __name__ == "__main__":
-    result = scan_for_agent("https://example.com")
+    result = scan_for_agent("https://example.com", scan_type="full")
     print(result["agent_summary"])
