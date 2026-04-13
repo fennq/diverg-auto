@@ -719,6 +719,15 @@ def batch_scan(
     scan_type: str = "standard",
     *,
     probe_names: list[str] | None = None,
+    max_requests_per_probe: int | None = None,
 ) -> list[ScanReport]:
     """Scan multiple URLs sequentially. Returns a list of ScanReport objects."""
-    return [scan(u, scan_type=scan_type, probe_names=probe_names) for u in urls]
+    return [
+        scan(
+            u,
+            scan_type=scan_type,
+            probe_names=probe_names,
+            max_requests_per_probe=max_requests_per_probe,
+        )
+        for u in urls
+    ]
